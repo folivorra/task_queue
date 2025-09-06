@@ -1,6 +1,10 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/folivorra/task_queue/pkg/apperrors"
+)
 
 type TaskStatus string
 
@@ -21,10 +25,10 @@ type Task struct {
 
 func ValidateTask(t Task) error {
 	if t.ID == "" {
-		return fmt.Errorf("id is required")
+		return fmt.Errorf("%w: id is required", apperrors.ErrInvalidData)
 	}
 	if t.MaxRetries < 0 {
-		return fmt.Errorf("max_retries must be >= 0")
+		return fmt.Errorf("%w: max_retries must be >= 0", apperrors.ErrInvalidData)
 	}
 	return nil
 }
