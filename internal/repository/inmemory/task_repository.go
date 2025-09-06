@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/folivorra/task_queue/internal/model"
+	"github.com/folivorra/task_queue/pkg/apperrors"
 )
 
 type TaskInMemoryRepo struct {
@@ -22,7 +23,7 @@ func (tr *TaskInMemoryRepo) Save(task *model.Task) error {
 	tr.Lock()
 	defer tr.Unlock()
 	if _, ok := tr.storage[task.ID]; ok {
-		return fmt.Errorf("task with this id already exists")
+		return fmt.Errorf("%w: task already exist", apperrors.ErrAlreadyExists)
 	}
 
 	tr.storage[task.ID] = task
@@ -35,7 +36,7 @@ func (tr *TaskInMemoryRepo) Get(id string) (model.Task, error) {
 	defer tr.RUnlock()
 	taskPtr, ok := tr.storage[id]
 	if !ok {
-		return model.Task{}, fmt.Errorf("task not found")
+		return model.Task{}, fmt.Errorf("%w: task not found", apperrors.ErrNotFound)
 	}
 
 	return *taskPtr, nil
@@ -47,7 +48,7 @@ func (tr *TaskInMemoryRepo) UpdateStatus(id string, status model.TaskStatus) err
 
 	task, ok := tr.storage[id]
 	if !ok {
-		return fmt.Errorf("task not found")
+		return fmt.Errorf("%w: task not found", apperrors.ErrNotFound)
 	}
 
 	task.Status = status
@@ -63,5 +64,6 @@ func (tr *TaskInMemoryRepo) List() []model.Task {
 	for _, t := range tr.storage {
 		tasks = append(tasks, *t)
 	}
+
 	return tasks
 }
