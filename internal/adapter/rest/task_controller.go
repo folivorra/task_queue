@@ -5,18 +5,21 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/folivorra/task_queue/internal/adapter/workerpool"
 	"github.com/folivorra/task_queue/internal/model"
 	"github.com/folivorra/task_queue/internal/usecase"
 	"github.com/folivorra/task_queue/pkg/apperrors"
 )
 
 type TaskController struct {
-	service *usecase.TaskService
+	service   *usecase.TaskService
+	processor *workerpool.WorkerPool
 }
 
-func NewTaskController(service *usecase.TaskService) *TaskController {
+func NewTaskController(service *usecase.TaskService, processor *workerpool.WorkerPool) *TaskController {
 	return &TaskController{
-		service: service,
+		service:   service,
+		processor: processor,
 	}
 }
 
@@ -56,11 +59,13 @@ func (tc *TaskController) Enqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tc.service.PushToQueue(task)
+	tc.processor.PushToQueue(task)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(task)
+	if err := json.NewEncoder(w).Encode(task); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func (tc *TaskController) Healthcheck(w http.ResponseWriter, r *http.Request) {
@@ -71,11 +76,55 @@ func (tc *TaskController) Healthcheck(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (tc *TaskController) GetTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	ids := r.URL.Query().Get("id")
+	if ids == "" {
+		writeJSONError(w, http.StatusBadRequest, "missing id parameter")
+		return
+	}
+
+	task, err := tc.service.Get(ids)
+	if err != nil {
+		switch {
+		case errors.Is(err, apperrors.ErrNotFound):
+			writeJSONError(w, http.StatusNotFound, err.Error())
+		default:
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(task); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
+func (tc *TaskController) GetTaskList(w http.ResponseWriter, r *http.Request) {
+	tasks := tc.service.List()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(tasks); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	}
 }
