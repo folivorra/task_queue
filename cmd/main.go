@@ -3,22 +3,34 @@ package main
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/folivorra/task_queue/internal/adapter/rest"
+	"github.com/folivorra/task_queue/internal/adapter/workerpool"
 	"github.com/folivorra/task_queue/internal/model"
 	"github.com/folivorra/task_queue/internal/repository/inmemory"
 	"github.com/folivorra/task_queue/internal/usecase"
 )
 
+var (
+	queueSize  int
+	workersNum int
+)
+
 func main() {
 	// ctx
-	_, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// random seed
+	rand.Seed(time.Now().UnixNano())
 
 	// logger
 	logger := slog.New(
@@ -30,31 +42,32 @@ func main() {
 		),
 	)
 
-	// queue_size get env
-	queueSizeStr := os.Getenv("QUEUE_SIZE")
-	if queueSizeStr == "" {
-		queueSizeStr = "64"
-	}
-	queueSize, err := strconv.Atoi(queueSizeStr)
-	if err != nil {
-		logger.Warn("QUEUE_SIZE is invalid, set default",
-			slog.Int("default_value", 64),
-		)
-		queueSize = 64
-	}
+	// env
+	getENV()
+	logger.Debug("getting environment variables",
+		slog.Int("queueSize", queueSize),
+		slog.Int("workersNum", workersNum),
+	)
 
-	// queue
-	taskQueue := make(chan *model.Task, queueSize)
-
-	// repo service controller
+	// repo service
 	taskRepo := inmemory.NewTaskInMemoryRepo()
-	taskService := usecase.NewTaskService(taskRepo, taskQueue)
-	taskController := rest.NewTaskController(taskService)
+	taskService := usecase.NewTaskService(taskRepo)
+
+	// worker pool
+	wg := &sync.WaitGroup{}
+	workerPool := workerpool.NewWorkerPool(taskService, workersNum,
+		make(chan *model.Task, queueSize), make(chan *model.Task, queueSize), wg, logger)
+	workerPool.Run(ctx)
+
+	// controller
+	taskController := rest.NewTaskController(taskService, workerPool)
 
 	// mux
 	mux := http.NewServeMux()
 	mux.HandleFunc("/enqueue", taskController.Enqueue)
 	mux.HandleFunc("/healthz", taskController.Healthcheck)
+	mux.HandleFunc("/task", taskController.GetTask)
+	mux.HandleFunc("/tasks", taskController.GetTaskList)
 
 	// server
 	server := rest.NewServer(&http.Server{
@@ -70,7 +83,7 @@ func main() {
 		}
 	}()
 
-	// gracefull shutdown
+	// graceful shutdown
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
 	<-shutdownCh
@@ -83,4 +96,29 @@ func main() {
 	}
 
 	cancel()
+	wg.Wait()
+	workerPool.Shutdown()
+}
+
+func getENV() {
+	var err error
+
+	queueSizeStr := os.Getenv("QUEUE_SIZE")
+	if queueSizeStr == "" {
+		queueSizeStr = "64"
+	}
+	queueSize, err = strconv.Atoi(queueSizeStr)
+	if err != nil {
+		queueSize = 64
+	}
+
+	workersNumStr := os.Getenv("WORKERS")
+	if workersNumStr == "" {
+		workersNumStr = "4"
+	}
+	workersNum, err = strconv.Atoi(workersNumStr)
+	if err != nil {
+		workersNum = 4
+	}
+
 }
