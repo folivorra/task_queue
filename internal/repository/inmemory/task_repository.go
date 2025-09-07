@@ -31,15 +31,15 @@ func (tr *TaskInMemoryRepo) Save(task *model.Task) error {
 	return nil
 }
 
-func (tr *TaskInMemoryRepo) Get(id string) (model.Task, error) {
+func (tr *TaskInMemoryRepo) Get(id string) (*model.Task, error) {
 	tr.RLock()
 	defer tr.RUnlock()
 	taskPtr, ok := tr.storage[id]
 	if !ok {
-		return model.Task{}, fmt.Errorf("%w: task not found", apperrors.ErrNotFound)
+		return nil, fmt.Errorf("%w: task not found", apperrors.ErrNotFound)
 	}
 
-	return *taskPtr, nil
+	return taskPtr, nil
 }
 
 func (tr *TaskInMemoryRepo) UpdateStatus(id string, status model.TaskStatus) error {
@@ -56,13 +56,27 @@ func (tr *TaskInMemoryRepo) UpdateStatus(id string, status model.TaskStatus) err
 	return nil
 }
 
-func (tr *TaskInMemoryRepo) List() []model.Task {
+func (tr *TaskInMemoryRepo) IncAttempts(id string) error {
+	tr.Lock()
+	defer tr.Unlock()
+
+	task, ok := tr.storage[id]
+	if !ok {
+		return fmt.Errorf("%w: task not found", apperrors.ErrNotFound)
+	}
+
+	task.Attempts += 1
+
+	return nil
+}
+
+func (tr *TaskInMemoryRepo) List() []*model.Task {
 	tr.RLock()
 	defer tr.RUnlock()
 
-	tasks := make([]model.Task, 0, len(tr.storage))
+	tasks := make([]*model.Task, 0, len(tr.storage))
 	for _, t := range tr.storage {
-		tasks = append(tasks, *t)
+		tasks = append(tasks, t)
 	}
 
 	return tasks
